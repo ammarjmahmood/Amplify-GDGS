@@ -1,4 +1,4 @@
-# Amplify 🎙️✨
+# Omoi 🎙️✨
 
 **Voice for everyone.**
 
