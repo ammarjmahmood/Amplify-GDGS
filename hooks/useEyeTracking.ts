@@ -17,8 +17,16 @@ export const useEyeTracking = (enabled: boolean, dwellTime: number = 2000) => {
     useEffect(() => {
         if (!enabled) {
             if ((window as any).webgazer && webgazerInitialized) {
-                (window as any).webgazer.pause();
-                console.log('⏸️ Eye tracking paused');
+                // Fully stop webgazer to release camera
+                (window as any).webgazer.end();
+                console.log('🛑 Eye tracking stopped');
+                webgazerInitialized = false;
+
+                // Force remove video container if it persists
+                const videoContainer = document.getElementById('webgazerVideoContainer');
+                if (videoContainer) {
+                    videoContainer.remove();
+                }
             }
             setGazePosition(null);
             setHoveredElement(null);
@@ -34,8 +42,11 @@ export const useEyeTracking = (enabled: boolean, dwellTime: number = 2000) => {
             return;
         }
 
+        // Since we are using .end(), we don't need resume logic as much, 
+        // but if we kept it initialized we would use it. 
+        // With .end(), we re-initialize.
         if (webgazerInitialized && (window as any).webgazer) {
-            console.log('▶️ Resuming existing WebGazer instance');
+            // If somehow still initialized but we want to ensure it's running
             (window as any).webgazer.resume();
             setIsInitialized(true);
             return;
@@ -241,7 +252,11 @@ export const useEyeTracking = (enabled: boolean, dwellTime: number = 2000) => {
 
         return () => {
             if ((window as any).webgazer && enabled) {
-                (window as any).webgazer.pause();
+                (window as any).webgazer.end();
+                const videoContainer = document.getElementById('webgazerVideoContainer');
+                if (videoContainer) {
+                    videoContainer.remove();
+                }
             }
             if (progressIntervalRef.current) {
                 clearInterval(progressIntervalRef.current);

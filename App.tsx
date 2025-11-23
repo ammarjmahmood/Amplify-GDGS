@@ -6,6 +6,8 @@ import { naturalizeSentence, generateSpeech, playAudioBuffer, predictNextSymbols
 import { useEyeTracking } from './hooks/useEyeTracking';
 import { GazeCursor } from './components/GazeCursor';
 import { CalibrationScreen } from './components/CalibrationScreen';
+import { ThemeProvider } from './components/ThemeContext';
+import { ThemeToggle } from './components/ThemeToggle';
 
 // --- WAV ENCODER HELPERS ---
 
@@ -83,12 +85,13 @@ const IconCard: React.FC<{
         aspect-square w-full p-2 rounded-3xl 
         transition-all duration-200 select-none
         ${isSuggested
-          ? 'scale-105 shadow-[0_10px_20px_-5px_rgba(0,0,0,0.2)] ring-4 ring-indigo-200 z-10'
-          : 'hover:scale-105 shadow-[0_4px_0_0_rgba(0,0,0,0.1)] hover:shadow-lg'
+          ? 'scale-105 shadow-[0_10px_20px_-5px_rgba(0,0,0,0.2)] ring-4 ring-indigo-200 z-10 dark:ring-indigo-500'
+          : 'hover:scale-105 shadow-[0_4px_0_0_rgba(0,0,0,0.1)] hover:shadow-lg dark:shadow-slate-900'
         }
         ${isGazedAt ? 'ring-4 ring-green-400 scale-110' : ''}
         border-b-4 active:border-b-0 active:translate-y-1
         ${symbol.color}
+        dark:brightness-90 dark:hover:brightness-100
       `}
     >
       {isSuggested && (
@@ -112,7 +115,7 @@ const IconCard: React.FC<{
       <span className="text-5xl md:text-6xl lg:text-7xl mb-3 drop-shadow-sm filter">
         {symbol.emoji}
       </span>
-      <span className="text-sm md:text-base font-extrabold text-slate-700 leading-tight text-center px-1">
+      <span className="text-sm md:text-base font-extrabold text-slate-700 leading-tight text-center px-1 dark:text-slate-900">
         {symbol.label}
       </span>
     </button>
@@ -167,7 +170,7 @@ const AudioVisualizer: React.FC<{ analyser: AnalyserNode | null, isRecording: bo
   if (!isRecording) return null;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1 bg-indigo-50 rounded-full border border-indigo-100 animate-fade-in">
+    <div className="flex items-center gap-2 px-3 py-1 bg-indigo-50 rounded-full border border-indigo-100 animate-fade-in dark:bg-indigo-900/30 dark:border-indigo-800">
       <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
       <canvas ref={canvasRef} width={120} height={24} />
     </div>
@@ -177,9 +180,21 @@ const AudioVisualizer: React.FC<{ analyser: AnalyserNode | null, isRecording: bo
 // --- MAIN APP ---
 
 export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
+  );
+}
+
+function AppContent() {
   const [view, setView] = useState<'landing' | 'board'>('landing');
   const [currentCategory, setCurrentCategory] = useState<AACSymbol | null>(null);
   const [sentence, setSentence] = useState<AACSymbol[]>([]);
+
+  // Animation State
+  const [flyingIcons, setFlyingIcons] = useState<{ id: string, symbol: AACSymbol, startRect: DOMRect, endRect: DOMRect }[]>([]);
+  const sentenceStripRef = useRef<HTMLDivElement>(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [generatedSentence, setGeneratedSentence] = useState<string>('');
@@ -208,6 +223,9 @@ export default function App() {
   const [showCalibration, setShowCalibration] = useState(false);
   const [isCalibrated, setIsCalibrated] = useState(false);
   const { gazePosition, hoveredElement, dwellProgress, isInitialized } = useEyeTracking(eyeTrackingEnabled, 500);
+
+  // Animation State
+  const [isStarting, setIsStarting] = useState(false);
 
   // --- RECORDING LOGIC (WAV) ---
 
@@ -260,6 +278,15 @@ export default function App() {
       console.error("Error accessing microphone:", err);
       setView('board');
     }
+  };
+
+  const handleStartClick = () => {
+    setIsStarting(true);
+    setTimeout(() => {
+      startBackgroundRecording();
+      // Reset state after transition so it's ready if user comes back
+      setTimeout(() => setIsStarting(false), 1000);
+    }, 1000);
   };
 
   const stopRecordingAndGetBlob = (): Promise<Blob | null> => {
@@ -326,7 +353,39 @@ export default function App() {
       setCurrentCategory(symbol);
       setManualSuggestions([]);
     } else {
-      setSentence(prev => [...prev, symbol]);
+      // 1. Calculate Start Position
+      const button = document.querySelector(`button[data-symbol-id="${symbol.id}"]`);
+      if (button && sentenceStripRef.current) {
+        const startRect = button.getBoundingClientRect();
+
+        // 2. Calculate End Position (approximate based on sentence length)
+        // We assume items are 80px wide (w-20) + 12px gap (gap-3) + 12px padding (p-3)
+        // This is a simplification; for perfect accuracy we'd need a dummy target.
+        const stripRect = sentenceStripRef.current.getBoundingClientRect();
+        const itemWidth = 80;
+        const gap = 12;
+        const padding = 12;
+        const currentOffset = padding + (sentence.length * (itemWidth + gap));
+
+        // If it overflows, just fly to the center/end of the visible area
+        const targetX = Math.min(stripRect.left + currentOffset, stripRect.right - itemWidth - padding);
+        const targetY = stripRect.top + padding;
+
+        const endRect = new DOMRect(targetX, targetY, itemWidth, itemWidth);
+
+        const flyingId = Date.now().toString();
+        setFlyingIcons(prev => [...prev, { id: flyingId, symbol, startRect, endRect }]);
+
+        // 3. Animate & Add to Sentence
+        setTimeout(() => {
+          setSentence(prev => [...prev, symbol]);
+          setFlyingIcons(prev => prev.filter(icon => icon.id !== flyingId));
+        }, 500); // Match CSS transition duration
+      } else {
+        // Fallback if no ref/element found
+        setSentence(prev => [...prev, symbol]);
+      }
+
       if (symbol.relatedIds && symbol.relatedIds.length > 0) {
         const suggestions: AACSymbol[] = [];
         symbol.relatedIds.forEach(id => {
@@ -473,24 +532,24 @@ export default function App() {
           />
         )}
 
-        <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden bg-[#f0f4f8]">
-          <div className="absolute top-0 left-0 w-96 h-96 bg-purple-300 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob"></div>
-          <div className="absolute top-0 right-0 w-96 h-96 bg-yellow-200 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-2000"></div>
-          <div className="absolute -bottom-8 left-20 w-96 h-96 bg-pink-200 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-4000"></div>
+        <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden bg-[#f0f4f8] dark:bg-slate-900 transition-colors duration-500">
+          <div className="absolute top-0 left-0 w-96 h-96 bg-purple-300 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob dark:opacity-20"></div>
+          <div className="absolute top-0 right-0 w-96 h-96 bg-yellow-200 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-2000 dark:opacity-20"></div>
+          <div className="absolute -bottom-8 left-20 w-96 h-96 bg-pink-200 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-4000 dark:opacity-20"></div>
 
           <div className="z-10 flex flex-col items-center text-center space-y-12 max-w-md w-full">
             <div>
-              <h1 className="text-6xl font-black text-slate-800 mb-2 tracking-tight">Amplify</h1>
-              <p className="text-xl text-slate-500 font-semibold">Voice for everyone.</p>
+              <h1 className="text-6xl font-black text-slate-800 mb-2 tracking-tight dark:text-slate-100">Amplify</h1>
+              <p className="text-xl text-slate-500 font-semibold dark:text-slate-400">Voice for everyone.</p>
             </div>
 
             <button
-              onClick={startBackgroundRecording}
-              className="group relative flex items-center justify-center w-64 h-64 rounded-full bg-white shadow-[0_20px_50px_rgba(99,102,241,0.3)] transition-transform hover:scale-105 active:scale-95"
+              onClick={handleStartClick}
+              className={`group relative flex items-center justify-center w-64 h-64 rounded-full bg-white shadow-[0_20px_50px_rgba(99,102,241,0.3)] transition-all duration-1000 ease-out hover:scale-105 active:scale-95 dark:bg-slate-800 dark:shadow-none ${isStarting ? 'scale-[3] opacity-0 pointer-events-none' : ''}`}
             >
               <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 opacity-10 group-hover:opacity-20 transition-opacity"></div>
-              <div className="absolute inset-0 rounded-full border-4 border-indigo-100 animate-ping opacity-20"></div>
-              <Mic size={100} className="text-indigo-600 drop-shadow-sm group-hover:text-indigo-700 transition-colors" />
+              <div className="absolute inset-0 rounded-full border-4 border-indigo-100 animate-ping opacity-20 dark:border-indigo-900"></div>
+              <Mic size={100} className="text-indigo-600 drop-shadow-sm group-hover:text-indigo-700 transition-colors dark:text-indigo-400" />
               <div className="absolute bottom-10 text-indigo-400 font-bold text-sm uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0">
                 Tap to Start
               </div>
@@ -512,7 +571,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen w-full bg-slate-50 flex flex-col font-nunito touch-pan-y select-none"
+      className="min-h-screen w-full bg-slate-50 flex flex-col font-nunito touch-pan-y select-none dark:bg-slate-950 transition-colors duration-300"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onMouseDown={handleMouseDown}
@@ -522,18 +581,18 @@ export default function App() {
       style={{ overscrollBehaviorX: 'none', cursor: currentCategory && isDraggingRef.current ? 'grabbing' : 'default' }}
     >
       {/* TOP BAR */}
-      <div className="bg-white shadow-lg sticky top-0 z-30 p-4 rounded-b-3xl">
+      <div className="bg-white shadow-lg sticky top-0 z-30 p-4 rounded-b-3xl dark:bg-slate-900 dark:shadow-slate-900/50 transition-colors duration-300">
         <div className="max-w-5xl mx-auto flex flex-col gap-4">
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <button onClick={() => setView('landing')} className="text-slate-400 hover:text-slate-600 transition-colors" title="Home">
+              <button onClick={() => setView('landing')} className="text-slate-400 hover:text-slate-600 transition-colors dark:text-slate-500 dark:hover:text-slate-300" title="Home">
                 <Home size={24} />
               </button>
               {currentCategory && (
                 <button
                   onClick={goBack}
-                  className="flex items-center gap-2 px-3 py-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-xl transition-colors font-bold"
+                  className="flex items-center gap-2 px-3 py-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-xl transition-colors font-bold dark:bg-indigo-900/50 dark:text-indigo-300 dark:hover:bg-indigo-900"
                   title="Go Back"
                 >
                   <ArrowLeft size={20} />
@@ -545,44 +604,50 @@ export default function App() {
               {isRecording && (
                 <AudioVisualizer analyser={analyserRef.current} isRecording={isRecording} />
               )}
-              <h1 className="font-black text-xl text-slate-700 tracking-tight hidden sm:block">Amplify</h1>
+              <h1 className="font-black text-xl text-slate-700 tracking-tight hidden sm:block dark:text-slate-200">Amplify</h1>
             </div>
-            <button
-              onClick={() => {
-                if (!eyeTrackingEnabled) {
-                  // Turning ON - show calibration if not calibrated
-                  setEyeTrackingEnabled(true);
-                  if (!isCalibrated) {
-                    setShowCalibration(true);
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <button
+                onClick={() => {
+                  if (!eyeTrackingEnabled) {
+                    // Turning ON - show calibration if not calibrated
+                    setEyeTrackingEnabled(true);
+                    if (!isCalibrated) {
+                      setShowCalibration(true);
+                    }
+                  } else {
+                    // Turning OFF
+                    setEyeTrackingEnabled(false);
                   }
-                } else {
-                  // Turning OFF
-                  setEyeTrackingEnabled(false);
-                }
-              }}
-              className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all font-bold ${eyeTrackingEnabled
-                ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              title={eyeTrackingEnabled ? 'Disable Eye Tracking' : 'Enable Eye Tracking'}
-            >
-              {eyeTrackingEnabled ? <Eye size={20} /> : <EyeOff size={20} />}
-              <span className="hidden md:inline">{eyeTrackingEnabled ? 'Eye On' : 'Eye Off'}</span>
-            </button>
+                }}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all font-bold ${eyeTrackingEnabled
+                  ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'
+                  }`}
+                title={eyeTrackingEnabled ? 'Disable Eye Tracking' : 'Enable Eye Tracking'}
+              >
+                {eyeTrackingEnabled ? <Eye size={20} /> : <EyeOff size={20} />}
+                <span className="hidden md:inline">{eyeTrackingEnabled ? 'Eye On' : 'Eye Off'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Sentence Strip */}
-          <div className="min-h-[110px] bg-slate-100 rounded-2xl border-2 border-slate-200 flex items-center p-3 overflow-x-auto gap-3 no-scrollbar">
-            {sentence.length === 0 && (
-              <div className="w-full text-center text-slate-400 font-semibold italic opacity-60">
+          <div
+            ref={sentenceStripRef}
+            className="min-h-[110px] bg-slate-100 rounded-2xl border-2 border-slate-200 flex items-center p-3 overflow-x-auto gap-3 no-scrollbar dark:bg-slate-800 dark:border-slate-700 transition-colors duration-300 relative"
+          >
+            {sentence.length === 0 && flyingIcons.length === 0 && (
+              <div className="w-full text-center text-slate-400 font-semibold italic opacity-60 dark:text-slate-500">
                 Select items to build sentence...
               </div>
             )}
             {sentence.map((s, idx) => (
               <div key={`${s.id}-${idx}`} className="flex-shrink-0 relative group animate-fade-in-up">
-                <div className={`flex flex-col items-center justify-center w-20 h-20 ${s.color} rounded-2xl border-b-4 shadow-sm`}>
+                <div className={`flex flex-col items-center justify-center w-20 h-20 ${s.color} rounded-2xl border-b-4 shadow-sm dark:brightness-90`}>
                   <span className="text-3xl">{s.emoji}</span>
-                  <span className="text-[10px] font-bold truncate max-w-[70px] uppercase tracking-wide text-slate-700 mt-1">{s.label}</span>
+                  <span className="text-[10px] font-bold truncate max-w-[70px] uppercase tracking-wide text-slate-700 mt-1 dark:text-slate-900">{s.label}</span>
                 </div>
                 <button
                   onClick={() => removeFromSentence(idx)}
@@ -597,7 +662,7 @@ export default function App() {
           {/* Generated Text & Controls */}
           <div className="space-y-3">
             {generatedSentence && (
-              <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 text-center text-indigo-700 font-bold text-lg animate-fade-in">
+              <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 text-center text-indigo-700 font-bold text-lg animate-fade-in dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-300">
                 "{generatedSentence}"
               </div>
             )}
@@ -606,7 +671,7 @@ export default function App() {
               {/* New Sentence / Done Button */}
               <button
                 onClick={clearSentence}
-                className="px-4 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border border-emerald-200 transition-colors flex items-center justify-center gap-2 font-bold"
+                className="px-4 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border border-emerald-200 transition-colors flex items-center justify-center gap-2 font-bold dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/50"
                 title="Start New Sentence"
               >
                 <Check size={24} />
@@ -616,7 +681,7 @@ export default function App() {
               <button
                 onClick={handleBackspace}
                 disabled={sentence.length === 0}
-                className="px-5 rounded-xl bg-orange-100 hover:bg-orange-200 text-orange-600 border border-orange-200 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-5 rounded-xl bg-orange-100 hover:bg-orange-200 text-orange-600 border border-orange-200 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed dark:bg-orange-900/30 dark:border-orange-800 dark:text-orange-400 dark:hover:bg-orange-900/50"
                 title="Backspace"
               >
                 <Delete size={24} />
@@ -630,6 +695,7 @@ export default function App() {
                   flex-1 py-4 rounded-xl font-bold text-white text-lg shadow-lg shadow-indigo-200
                   flex items-center justify-center gap-3 transition-all transform active:scale-95
                   ${isProcessing ? 'bg-indigo-400 cursor-wait' : 'bg-gradient-to-r from-indigo-500 to-purple-600 hover:brightness-110'}
+                  dark:shadow-[0_0_20px_rgba(255,255,255,0.3)]
                 `}
               >
                 {isProcessing ? (
@@ -655,12 +721,12 @@ export default function App() {
         {/* Category Header */}
         {currentCategory && (
           <div className="flex items-center gap-4 mb-6 animate-fade-in">
-            <div className={`flex items-center gap-3 px-6 py-3 rounded-2xl ${currentCategory.color} border-2 border-black/5 flex-1 shadow-sm`}>
+            <div className={`flex items-center gap-3 px-6 py-3 rounded-2xl ${currentCategory.color} border-2 border-black/5 flex-1 shadow-sm dark:brightness-90`}>
               <span className="text-2xl">{currentCategory.emoji}</span>
-              <h2 className="text-xl font-black text-slate-800">{currentCategory.label}</h2>
+              <h2 className="text-xl font-black text-slate-800 dark:text-slate-900">{currentCategory.label}</h2>
             </div>
-            <div className="text-slate-300 text-sm font-bold uppercase tracking-widest animate-pulse hidden md:block">
-              &larr; Swipe to Back
+            <div className="text-slate-300 text-sm font-bold uppercase tracking-widest animate-pulse hidden md:block dark:text-slate-600">
+              &rarr; Swipe to Back
             </div>
           </div>
         )}
@@ -668,8 +734,8 @@ export default function App() {
         {/* Smart AI Suggestions Area */}
         {finalSuggestions.length > 0 && (
           <div className="mb-6 animate-fade-in-up">
-            <div className="flex items-center gap-2 text-indigo-500 text-sm font-bold uppercase tracking-wider mb-3">
-              <Sparkles size={16} className="text-indigo-500" />
+            <div className="flex items-center gap-2 text-indigo-500 text-sm font-bold uppercase tracking-wider mb-3 dark:text-indigo-400">
+              <Sparkles size={16} className="text-indigo-500 dark:text-indigo-400" />
               Suggested Next
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
@@ -684,7 +750,7 @@ export default function App() {
                 />
               ))}
             </div>
-            <div className="h-1 w-full bg-slate-200 rounded-full mt-6 mb-2"></div>
+            <div className="h-1 w-full bg-slate-200 rounded-full mt-6 mb-2 dark:bg-slate-800"></div>
           </div>
         )}
 
@@ -701,6 +767,45 @@ export default function App() {
           ))}
         </div>
       </div>
+
+      {/* Flying Icons Overlay */}
+      {flyingIcons.map((icon) => (
+        <div
+          key={icon.id}
+          className="fixed z-50 pointer-events-none transition-all duration-500 ease-in-out"
+          style={{
+            top: icon.startRect.top,
+            left: icon.startRect.left,
+            width: icon.startRect.width,
+            height: icon.startRect.height,
+            animation: 'flyToTarget 0.5s forwards'
+          }}
+        >
+          <div className={`w-full h-full flex flex-col items-center justify-center rounded-2xl shadow-lg border-2 border-white/50 ${icon.symbol.color}`}>
+            <span className="text-4xl">{icon.symbol.emoji}</span>
+          </div>
+          <style>{`
+             @keyframes flyToTarget {
+               0% {
+                 top: ${icon.startRect.top}px;
+                 left: ${icon.startRect.left}px;
+                 width: ${icon.startRect.width}px;
+                 height: ${icon.startRect.height}px;
+                 transform: scale(1);
+                 opacity: 1;
+               }
+               100% {
+                 top: ${icon.endRect.top}px;
+                 left: ${icon.endRect.left}px;
+                 width: ${icon.endRect.width}px;
+                 height: ${icon.endRect.height}px;
+                 transform: scale(1);
+                 opacity: 1;
+               }
+             }
+           `}</style>
+        </div>
+      ))}
 
       {/* Gaze Cursor Overlay */}
       <GazeCursor gazePosition={gazePosition} enabled={eyeTrackingEnabled} />
