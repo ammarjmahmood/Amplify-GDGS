@@ -42,7 +42,7 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
  * Takes a sequence of symbols AND optional audio context to make a natural sentence.
  * Uses Gemini 2.5's multimodal capabilities to "hear" the user's intent.
  */
-export const naturalizeSentence = async (symbols: string[], audioBlob?: Blob | null): Promise<string> => {
+export const naturalizeSentence = async (symbols: string[], audioBlob?: Blob | null, emotion: string = 'Neutral'): Promise<string> => {
   if (symbols.length === 0 && !audioBlob) return "";
 
   const model = 'gemini-2.5-flash';
@@ -50,12 +50,15 @@ export const naturalizeSentence = async (symbols: string[], audioBlob?: Blob | n
   const promptText = `
     You are an AAC communication assistant. The user has selected these symbols in order: ${symbols.join(', ')}
     
+    IMPORTANT: The user wants to speak with a ${emotion} tone/emotion.
+    
     Your task:
     1. Reorder and combine these words into a grammatically correct, natural sentence
     2. The user may have selected words in ANY order - you must rearrange them to make sense
-    3. If audio is provided, use it to detect emotion (excited, frustrated, calm, urgent) and tone
-    4. Speak as a child would naturally speak
-    5. Add necessary words (I, want, need, please, help, etc.) to make it sound natural
+    3. Express the sentence with a ${emotion} tone
+    4. If audio is provided, use it to detect additional emotion cues
+    5. Speak as a child would naturally speak
+    6. Add necessary words (I, want, need, please, help, etc.) to make it sound natural
     
     Examples:
     - Input: "help, poop, dad" → Output: "Dad, I need help going to the bathroom!"

@@ -8,6 +8,7 @@ import { GazeCursor } from './components/GazeCursor';
 
 import { ThemeProvider } from './components/ThemeContext';
 import { ThemeToggle } from './components/ThemeToggle';
+import { Settings } from './components/Settings';
 import { LocationTracker } from './components/LocationTracker';
 
 // --- WAV ENCODER HELPERS ---
@@ -225,6 +226,59 @@ function AppContent() {
 
   // Animation State
   const [isStarting, setIsStarting] = useState(false);
+
+  // Emotion/Tone State (permanent, passed to LLM)
+  const [currentEmotion, setCurrentEmotion] = useState<string>('Excited');
+  const [showTone, setShowTone] = useState<boolean>(false); // Only show after key press
+
+  // Settings State
+  const [showSettings, setShowSettings] = useState(false);
+  const [sentenceHistory, setSentenceHistory] = useState<string[]>([]);
+  const [dataSharing, setDataSharing] = useState(false);
+  const [outputLanguage, setOutputLanguage] = useState('en');
+  const [selectedVoice, setSelectedVoice] = useState('rachel');
+
+  // Load settings from localStorage
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('sentenceHistory');
+    const savedDataSharing = localStorage.getItem('dataSharing');
+    const savedLanguage = localStorage.getItem('outputLanguage');
+    const savedVoice = localStorage.getItem('selectedVoice');
+
+    if (savedHistory) setSentenceHistory(JSON.parse(savedHistory));
+    if (savedDataSharing) setDataSharing(savedDataSharing === 'true');
+    if (savedLanguage) setOutputLanguage(savedLanguage);
+    if (savedVoice) setSelectedVoice(savedVoice);
+  }, []);
+
+  // Save settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('sentenceHistory', JSON.stringify(sentenceHistory));
+  }, [sentenceHistory]);
+
+  useEffect(() => {
+    localStorage.setItem('dataSharing', dataSharing.toString());
+  }, [dataSharing]);
+
+  useEffect(() => {
+    localStorage.setItem('outputLanguage', outputLanguage);
+  }, [outputLanguage]);
+
+  useEffect(() => {
+    localStorage.setItem('selectedVoice', selectedVoice);
+  }, [selectedVoice]);
+
+  // Keyboard listener to change emotion and show tone
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Any key press shows the tone and sets it to Excited
+      setShowTone(true);
+      setCurrentEmotion('Excited');
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
 
   // --- RECORDING LOGIC (WAV) ---
 
@@ -491,10 +545,13 @@ function AppContent() {
     // 1. Stop recording and get WAV blob
     const blob = await stopRecordingAndGetBlob();
 
-    // 2. Naturalize Sentence using Gemini (Text + Audio)
+    // 2. Naturalize Sentence using Gemini (Text + Audio) with emotion/tone
     const labels = sentence.map(s => s.label);
-    const naturalText = await naturalizeSentence(labels, blob);
+    const naturalText = await naturalizeSentence(labels, blob, currentEmotion);
     setGeneratedSentence(naturalText);
+
+    // Add to sentence history
+    setSentenceHistory(prev => [naturalText, ...prev].slice(0, 50)); // Keep last 50 sentences
 
     // 3. Generate Audio using Gemini TTS
     const audioBuffer = await generateSpeech(naturalText);
@@ -524,7 +581,8 @@ function AppContent() {
 
           <div className="z-10 flex flex-col items-center text-center space-y-12 max-w-md w-full">
             <div>
-              <h1 className="text-6xl font-black text-slate-800 mb-2 tracking-tight dark:text-slate-100">Amplify</h1>
+              <h1 className="text-6xl font-black text-slate-800 mb-2 tracking-tight dark:text-slate-100">OMOI</h1>
+              <p className="text-lg text-slate-600 font-bold dark:text-slate-500 mb-1">Unlocking the silent world</p>
               <p className="text-xl text-slate-500 font-semibold dark:text-slate-400">Voice for everyone.</p>
             </div>
 
@@ -565,6 +623,7 @@ function AppContent() {
       onMouseLeave={handleMouseLeave}
       style={{ overscrollBehaviorX: 'none', cursor: currentCategory && isDraggingRef.current ? 'grabbing' : 'default' }}
     >
+
       {/* TOP BAR */}
       <div className="bg-white shadow-lg sticky top-0 z-30 p-4 rounded-b-3xl dark:bg-slate-900 dark:shadow-slate-900/50 transition-colors duration-300">
         <div className="max-w-5xl mx-auto flex flex-col gap-4">
@@ -589,11 +648,29 @@ function AppContent() {
               {isRecording && (
                 <AudioVisualizer analyser={analyserRef.current} isRecording={isRecording} />
               )}
-              <h1 className="font-black text-xl text-slate-700 tracking-tight hidden sm:block dark:text-slate-200">Amplify</h1>
+              {/* Emotion/Tone Indicator - Only shows after keyboard press */}
+              {showTone && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-purple-100 rounded-full border border-purple-200 dark:bg-purple-900/30 dark:border-purple-800">
+                  <span className="text-purple-600 dark:text-purple-400 font-bold text-sm">Tone:</span>
+                  <span className="text-purple-700 dark:text-purple-300 font-black text-sm">{currentEmotion}</span>
+                </div>
+              )}
+              <h1 className="font-black text-xl text-slate-700 tracking-tight hidden sm:block dark:text-slate-200">OMOI</h1>
             </div>
             <div className="flex items-center gap-2">
               <LocationTracker />
               <ThemeToggle />
+              <button
+                onClick={() => setShowSettings(true)}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl transition-all font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                title="Settings"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+                <span className="hidden md:inline">Settings</span>
+              </button>
               <button
                 onClick={() => setEyeTrackingEnabled(!eyeTrackingEnabled)}
                 className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all font-bold ${eyeTrackingEnabled
@@ -672,16 +749,17 @@ function AppContent() {
                   ${isProcessing ? 'bg-indigo-400 cursor-wait' : 'bg-gradient-to-r from-indigo-500 to-purple-600 hover:brightness-110'}
                   dark:shadow-[0_0_20px_rgba(255,255,255,0.3)]
                 `}
+                title="Generate Speech"
               >
                 {isProcessing ? (
                   <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <div className="w-6 h-6 border-4 border-white border-t-transparent rounded-full animate-spin" />
                     Processing...
                   </>
                 ) : (
                   <>
-                    <Wand2 size={24} fill="currentColor" className="text-white/20" />
-                    Amplify Voice
+                    <Volume2 size={28} />
+                    OMOI Voice
                   </>
                 )}
               </button>
@@ -782,18 +860,23 @@ function AppContent() {
         </div>
       ))}
 
-      {/* Mode Indicator */}
-      {eyeTrackingEnabled && (
-        <div className="fixed bottom-4 left-4 z-40 bg-slate-900/80 text-white px-4 py-2 rounded-xl backdrop-blur-sm border border-slate-700 flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${isUsingMouse ? 'bg-blue-400' : 'bg-green-400'} animate-pulse`}></div>
-          <span className="text-sm font-bold">
-            {isUsingMouse ? '🖱️ Mouse Mode' : '👁️ Eye Tracking'}
-          </span>
-        </div>
-      )}
-
       {/* Gaze Cursor Overlay */}
       <GazeCursor gazePosition={gazePosition} enabled={eyeTrackingEnabled} />
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <Settings
+          onClose={() => setShowSettings(false)}
+          sentenceHistory={sentenceHistory}
+          onClearHistory={() => setSentenceHistory([])}
+          dataSharing={dataSharing}
+          onDataSharingChange={setDataSharing}
+          outputLanguage={outputLanguage}
+          onLanguageChange={setOutputLanguage}
+          selectedVoice={selectedVoice}
+          onVoiceChange={setSelectedVoice}
+        />
+      )}
 
       <style>{`
         @keyframes blob {

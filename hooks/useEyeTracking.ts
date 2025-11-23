@@ -51,13 +51,21 @@ export const useEyeTracking = (enabled: boolean, dwellTime: number = 2000) => {
             if (mouseInactivityTimerRef.current) {
                 clearTimeout(mouseInactivityTimerRef.current);
             }
-
+            // Show cursor when disabled
             document.body.style.cursor = 'default';
+            const existingStyle = document.getElementById('eye-tracking-cursor-hide');
+            if (existingStyle) {
+                existingStyle.remove();
+            }
             return;
         }
 
-        // Hide cursor when eye tracking is enabled
+        // Hide cursor when eye tracking is enabled - apply to body and all elements
         document.body.style.cursor = 'none';
+        const style = document.createElement('style');
+        style.id = 'eye-tracking-cursor-hide';
+        style.textContent = '* { cursor: none !important; }';
+        document.head.appendChild(style);
 
         // Mouse movement handler
         const handleMouseMove = (e: MouseEvent) => {
@@ -278,7 +286,7 @@ export const useEyeTracking = (enabled: boolean, dwellTime: number = 2000) => {
 
                         setIsInitialized(true);
                         console.log('✅ Eye tracking fully initialized!');
-                    }, 1000);
+                    }, 100); // Reduced from 1000ms to 100ms for immediate display
                 })
                 .catch((err: any) => {
                     console.error('❌ WebGazer failed to start:', err);
@@ -310,6 +318,10 @@ export const useEyeTracking = (enabled: boolean, dwellTime: number = 2000) => {
             }
             document.removeEventListener('mousemove', handleMouseMove);
             document.body.style.cursor = 'default';
+            const existingStyle = document.getElementById('eye-tracking-cursor-hide');
+            if (existingStyle) {
+                existingStyle.remove();
+            }
         };
     }, [enabled, dwellTime]);
 
