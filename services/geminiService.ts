@@ -3,7 +3,7 @@ import { VOCABULARY } from "../constants";
 import { AACSymbol } from "../types";
 
 // Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 /**
  * Flatten vocabulary for searching and context
@@ -81,76 +81,63 @@ export const naturalizeSentence = async (symbols: string[], audioBlob?: Blob | n
         }
       });
     } catch (e) {
-      console.warn("Failed to process audio blob for API, proceeding with text only.", e);
+      console.error("Error encoding audio:", e);
     }
   }
 
   try {
     const response = await ai.models.generateContent({
       model,
-      contents: { parts },
+      contents: [{ parts }]
     });
-    return response.text?.trim() || symbols.join(' ');
+
+    const text = response.text.trim();
+    return text;
   } catch (error) {
-    console.error("Gemini naturalization error:", error);
+    console.error("Gemini naturalizeSentence error:", error);
     return symbols.join(' ');
   }
 };
 
 /**
- * Predicts the next likely AAC symbols based on the current sentence history.
+ * Predict next symbols based on current sentence
  */
-export const predictNextSymbols = async (currentLabels: string[]): Promise<string[]> => {
-  if (currentLabels.length === 0) return [];
-
-  // Create a lightweight context string of available vocabulary options
-  // Format: "id: label"
-  const vocabContext = flatVocab.map(v => `${v.id}: ${v.label}`).join(', ');
+export const predictNextSymbols = async (currentSentence: string[]): Promise<string[]> => {
+  if (currentSentence.length === 0) return [];
 
   const model = 'gemini-2.5-flash';
-  const prompt = `
-    AAC Prediction Task:
-    Current: [${currentLabels.join(', ')}]
-    Vocabulary: ${vocabContext}
-    
-    Return JSON array of 3 most likely next symbol IDs.
-    Example: ["want", "apple", "play"]
+
+  const promptText = `
+    The user has selected: ${currentSentence.join(' ')}
+    Suggest 3-5 next words from: ${flatVocab.map(v => v.label).join(', ')}
+    Return ONLY a comma-separated list.
   `;
 
   try {
     const response = await ai.models.generateContent({
       model,
-      contents: prompt,
-      config: { responseMimeType: 'application/json' }
+      contents: [{ parts: [{ text: promptText }] }]
     });
 
-    const text = response.text;
-    if (!text) return [];
-
-    const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed : [];
+    const text = response.text.trim();
+    const suggestions = text.split(',').map(s => s.trim()).filter(Boolean);
+    return suggestions.slice(0, 5);
   } catch (error) {
-    console.error("Gemini prediction error:", error);
+    console.error("Gemini predictNextSymbols error:", error);
     return [];
   }
 };
 
 /**
- * Generates high-quality speech from text using ElevenLabs TTS.
- * Falls back to Gemini TTS if ElevenLabs fails.
+ * Generate speech using ElevenLabs (primary) or Gemini TTS (fallback)
  */
 export const generateSpeech = async (text: string): Promise<ArrayBuffer | null> => {
-  if (!text) return null;
+  const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 
-  // Try ElevenLabs first (faster and higher quality)
-  try {
-    const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-
-    if (ELEVENLABS_API_KEY) {
-      // Using Rachel voice - warm, clear, and child-friendly
-      const voiceId = 'EXAVITQu4vr4xnSDxMaL'; // Rachel voice
-
-      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+  // Try ElevenLabs first
+  if (ELEVENLABS_API_KEY) {
+    try {
+      const response = await fetch('https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM', {
         method: 'POST',
         headers: {
           'Accept': 'audio/mpeg',
@@ -158,13 +145,11 @@ export const generateSpeech = async (text: string): Promise<ArrayBuffer | null> 
           'xi-api-key': ELEVENLABS_API_KEY
         },
         body: JSON.stringify({
-          text: text,
-          model_id: 'eleven_turbo_v2_5', // Fastest model with great quality
+          text,
+          model_id: 'eleven_monolingual_v1',
           voice_settings: {
             stability: 0.5,
-            similarity_boost: 0.75,
-            style: 0.5,
-            use_speaker_boost: true
+            similarity_boost: 0.5
           }
         })
       });
@@ -172,31 +157,29 @@ export const generateSpeech = async (text: string): Promise<ArrayBuffer | null> 
       if (response.ok) {
         const audioBlob = await response.blob();
         return await audioBlob.arrayBuffer();
-      } else {
-        console.warn("ElevenLabs TTS failed, falling back to Gemini:", await response.text());
       }
+    } catch (error) {
+      console.warn("ElevenLabs TTS failed, falling back to Gemini:", error);
     }
-  } catch (error) {
-    console.warn("ElevenLabs TTS error, falling back to Gemini:", error);
   }
 
   // Fallback to Gemini TTS
   try {
+    const model = 'gemini-2.5-flash';
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: { parts: [{ text: text }] },
+      model,
+      contents: [{
+        parts: [{
+          text: `Generate speech audio for: "${text}"`
+        }]
+      }],
       config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: 'Kore' },
-          },
-        },
-      },
+        responseModalities: [Modality.AUDIO]
+      }
     });
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (base64Audio) {
+    if (response.audioData) {
+      const base64Audio = response.audioData;
       const binaryString = atob(base64Audio);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
@@ -212,14 +195,38 @@ export const generateSpeech = async (text: string): Promise<ArrayBuffer | null> 
   }
 };
 
+// Global AudioContext for Safari/iPad compatibility
+let globalAudioContext: AudioContext | null = null;
+
+const getAudioContext = () => {
+  if (!globalAudioContext) {
+    globalAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
+  return globalAudioContext;
+};
+
 /**
- * Helper to decode audio for playback
+ * Helper to decode audio for playback - Safari/iPad compatible
  */
 export const playAudioBuffer = async (buffer: ArrayBuffer) => {
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-  const audioBuffer = await audioContext.decodeAudioData(buffer);
-  const source = audioContext.createBufferSource();
-  source.buffer = audioBuffer;
-  source.connect(audioContext.destination);
-  source.start(0);
+  try {
+    const audioContext = getAudioContext();
+
+    // Resume AudioContext if suspended (required for Safari/iPad)
+    if (audioContext.state === 'suspended') {
+      console.log('AudioContext suspended, resuming...');
+      await audioContext.resume();
+    }
+
+    console.log('AudioContext state:', audioContext.state);
+    const audioBuffer = await audioContext.decodeAudioData(buffer);
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContext.destination);
+    source.start(0);
+    console.log('✅ Audio playback started');
+  } catch (error) {
+    console.error('❌ Audio playback error:', error);
+    throw error;
+  }
 };
